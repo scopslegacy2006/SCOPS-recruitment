@@ -107,6 +107,9 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--accent);}
 .hcard .hn{font:700 14px 'Space Grotesk',sans-serif;color:var(--sky-100);}
 .hcard .hp{font-size:12px;color:var(--accent);font-weight:600;margin-top:3px;}
 .hcard .hj{font-size:12px;color:var(--muted);margin-top:4px;}
+.seg{display:flex;gap:8px;margin:0 0 14px;}
+.seg button{flex:1;font:600 13px 'Inter',sans-serif;padding:13px 8px;border:1px solid var(--line);background:var(--input);color:var(--muted);border-radius:2px;cursor:pointer;line-height:1.3;}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:var(--navy-900);}
 
 </style>
 </head>
@@ -427,12 +430,17 @@ FW.pubInfo = (statuses, key) => {
 
   if(qid) track(qid);
   /* Workshops are 100% admin-defined (recruit/workshops). Only active, named ones are offered. */
-  const activeWs = () => Object.entries(workshops||{}).filter(([id,w])=>/^ws[1-6]$/.test(id) && w && w.active===true && String(w.name||'').trim()).sort((a,b)=>(a[1].order||0)-(b[1].order||0)).map(([id,w])=>({id,name:String(w.name).trim()}));
+  const activeWs = () => Object.entries(workshops||{}).filter(([id,w])=>/^(ws[1-6]|ot[1-8])$/.test(id) && w && w.active===true && String(w.name||'').trim()).sort((a,b)=>(a[1].order||0)-(b[1].order||0)).map(([id,w])=>({id,name:String(w.name).trim(),kind:id.startsWith('ot')?'ot':'ws'}));
+  const KINDS = {ws:{btn:'Academic Workshops',q:'Which workshop would you like to join?',err:'Please choose one of the available workshops.'}, ot:{btn:'Organizational Team',q:'Which team would you like to join?',err:'Please choose one of the available teams.'}};
+  let applyKind = null;
   function renderWorkshops(sel){
-    const box = $('wsField');
-    const html = `<div class="field" id="wsField"><label dir="auto">Which workshop would you like to join?<span class="req" aria-label="required">*</span></label>${activeWs().map(w=>`<label class="opt"><input type="radio" name="ws_choice" value="${FW.esc(w.id)}" ${w.id===sel?'checked':''}><span dir="auto">${FW.esc(w.name)}</span></label>`).join('')}<div class="err"></div></div>`;
-    if(box) box.outerHTML = html; else $('fields').insertAdjacentHTML('beforeend', html);
+    const all = activeWs(), kinds = ['ws','ot'].filter(k=>all.some(w=>w.kind===k));
+    if(!kinds.includes(applyKind)) applyKind = kinds[0] || 'ws';
+    const list = all.filter(w=>w.kind===applyKind), box = $('wsField');
+    const html = `<div class="field" id="wsField"><label dir="auto">I am applying to<span class="req" aria-label="required">*</span></label>${kinds.length>1?`<div class="seg" role="tablist">${kinds.map(k=>`<button type="button" data-kind="${k}" class="${k===applyKind?'on':''}">${KINDS[k].btn}</button>`).join('')}</div>`:''}<label dir="auto" style="margin-top:6px;">${KINDS[applyKind].q}</label>${list.map(w=>`<label class="opt"><input type="radio" name="ws_choice" value="${FW.esc(w.id)}" ${w.id===sel?'checked':''}><span dir="auto">${FW.esc(w.name)}</span></label>`).join('')}<div class="err"></div></div>`;
+    if(box) box.outerHTML = html; else $('fields').insertAdjacentHTML('afterbegin', html);
   }
+  document.addEventListener('click', e => { const b = e.target.closest('.seg button[data-kind]'); if(b && b.dataset.kind!==applyKind){ applyKind = b.dataset.kind; renderWorkshops(); } });
   if(!settings.open || !questions.length || !activeWs().length){
     $('closedText').textContent = (settings.open && questions.length) ? 'Registration is not available right now because no workshop is currently open. Please check back soon.' : settings.closedMessage;
     show('closed'); return;
@@ -453,7 +461,7 @@ FW.pubInfo = (statuses, key) => {
     const r = FW.collect(questions, $('fields'));
     const wsBox = $('wsField'), pick = document.querySelector('input[name="ws_choice"]:checked');
     const wsOk = !!pick && activeWs().some(w=>w.id===pick.value);
-    wsBox.classList.toggle('invalid', !wsOk); wsBox.querySelector('.err').textContent = wsOk ? '' : 'Please choose one of the available workshops.';
+    wsBox.classList.toggle('invalid', !wsOk); wsBox.querySelector('.err').textContent = wsOk ? '' : KINDS[applyKind].err;
     if(!r.ok || !wsOk){ (r.firstBad || wsBox).scrollIntoView({behavior:'smooth',block:'center'}); return; }
     if(!r.core.name){ r.core.name = 'Unnamed applicant'; }
 
@@ -468,14 +476,14 @@ FW.pubInfo = (statuses, key) => {
     const wsId = pick.value, wsName = String(fw.name).trim();
     const year = new Date().getFullYear();
     const id = `FW-${year}-${FW.uid(6).toUpperCase()}`;
-    r.answers.__workshop = {label:'Which workshop would you like to join?', type:'radio', value:wsName, order:9999};
+    r.answers.__workshop = {label:KINDS[wsId.startsWith('ot')?'ot':'ws'].q, type:'radio', value:wsName, order:9999};
     const app = { id, createdAt: FW.TS, core: r.core, answers: r.answers, workshopId: wsId, workshopName: wsName };
     // atomic multi-path write: application + duplicate-guard keys all succeed or all fail
     const body = { ['applications/'+id]: app, ['public/'+id]: {s:'new', at:FW.TS} };
     FW.dupKeys(r.core, settings.dupFields).forEach(k => body['dedupe/'+k] = id);
     const res = await FW.patch('recruit', body);
     if(res.ok){
-      $('successText').textContent = settings.successMessage + ' — Workshop: ' + wsName;
+      $('successText').textContent = settings.successMessage + (wsId.startsWith('ot') ? ' — Team: ' : ' — Workshop: ') + wsName;
       $('appId').textContent = id;
       show('success'); window.scrollTo({top:0,behavior:'smooth'});
     }else{
